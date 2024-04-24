@@ -50,7 +50,6 @@ func establishConnections(servers []Server) {
 		}
 		defer conn.Close()
 		fmt.Printf("Connected to %s at %s on port %s\n", server.Name, server.Host, server.Port)
-		// You can use 'conn' for further communication with the server if needed
 	}
 }
 
