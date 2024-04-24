@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 )
 
 type Server struct {
@@ -41,15 +42,36 @@ func readConfigFile(filename string) ([]Server, error) {
 	return servers, nil
 }
 
+// Function to establish connections to servers
 func establishConnections(servers []Server) {
-	for _, server := range servers {
-		conn, err := net.Dial("tcp", server.Host+":"+server.Port)
-		if err != nil {
-			fmt.Printf("Error connecting to %s at %s on port %s: %s\n", server.Name, server.Host, server.Port, err)
-			continue
+	connectedServers := make(map[string]bool)
+	for {
+		for _, server := range servers {
+			if connectedServers[server.Name] {
+				continue // Skip already connected servers
+			}
+			conn, err := net.Dial("tcp", server.Host+":"+server.Port)
+			if err != nil {
+				fmt.Printf("Error connecting to %s at %s on port %s: %s\n", server.Name, server.Host, server.Port, err)
+				time.Sleep(3 * time.Second) // Wait before retrying
+				continue
+			}
+			connectedServers[server.Name] = true
+			fmt.Printf("Connected to %s at %s on port %s\n", server.Name, server.Host, server.Port)
+			defer conn.Close()
+			// You can use 'conn' for further communication with the server if needed
 		}
-		defer conn.Close()
-		fmt.Printf("Connected to %s at %s on port %s\n", server.Name, server.Host, server.Port)
+
+		allConnected := true
+		for _, server := range servers {
+			if !connectedServers[server.Name] {
+				allConnected = false
+				break
+			}
+		}
+		if allConnected {
+			break // Exit the loop if all servers are connected
+		}
 	}
 }
 
