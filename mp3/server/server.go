@@ -140,7 +140,7 @@ func main() {
     fmt.Printf("Server started on port %s\n", currentServer.Port)
 
     go establishConnections(servers)
-    handleIncomingConnections(listener)
+    handleIncomingConnections(listener, servers)
 
     fmt.Printf("Branch %s has been successfully connected to all servers.\n", branch)
 }
