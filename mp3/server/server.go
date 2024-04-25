@@ -62,8 +62,7 @@ func establishConnections(servers []Server) {
     }
 }
 
-func handleIncomingConnections(listener net.Listener) {
-    connectionCount := 0
+func handleIncomingConnections(listener net.Listener, servers []Server) {
     for {
         conn, err := listener.Accept()
         if err != nil {
@@ -71,25 +70,35 @@ func handleIncomingConnections(listener net.Listener) {
             continue
         }
         go func(c net.Conn) {
-            // defer c.Close() DON'T WANT TO CLOSE WHEN THIS FUNCTION ENDS
             remoteAddr := c.RemoteAddr().String()
             parts := strings.Split(remoteAddr, ":")
             host := parts[0]
-            // Add the connected server information to the map
-            connectedServers[host] = Server{Host: host, Conn: c}
-            fmt.Println("Added new connected server:", host)
-            connectionCount++
-            if connectionCount >= numServers {
+            // Search through servers to find the matching server by IP
+            found := false
+            for _, server := range servers {
+                if server.Host == host {
+                    server.Conn = c // Update the connection in the server struct
+                    connectedServers[server.Name] = server // Store by server name instead of host IP
+                    fmt.Printf("Added new connected server: %s at %s\n", server.Name, server.Host)
+                    found = true
+                    break
+                }
+            }
+            if !found {
+                fmt.Printf("Received connection from unknown host: %s\n", host)
+            }
+            if len(connectedServers) >= numServers {
                 fmt.Println("All expected connections have been established.")
                 return
             }
         }(conn)
 
-        if connectionCount >= numServers {
+        if len(connectedServers) >= numServers {
             break
         }
     }
 }
+
 
 func main() {
     args := os.Args[1:]
