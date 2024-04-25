@@ -10,7 +10,7 @@ import (
 )
 
 var connectedServers = make(map[string]bool)
-var branch string // Branch of the server
+var currentServer Server
 
 type Server struct {
 	Name string
@@ -98,6 +98,23 @@ func main() {
 		fmt.Println("Error reading config file:", err)
 		return
 	}
+
+	// Get the current server from the list
+	for _, server := range servers {
+		if server.Name == branch {
+			currentServer = server
+			break
+		}
+	}
+
+	// Start listening on the specified port
+	listener, err := net.Listen("tcp", ":"+currentServer.Port)
+	if err != nil {
+		fmt.Printf("Error starting server on port %s: %s\n", currentServer.Port, err)
+		os.Exit(1)
+	}
+	defer listener.Close()
+	fmt.Printf("Server started on port %s\n", currentServer.Port)
 
 	establishConnections(servers)
 

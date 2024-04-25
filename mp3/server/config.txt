@@ -1,5 +1,5 @@
-A sp23-cs425-4201.cs.illinois.edu 1234
-B sp23-cs425-4202.cs.illinois.edu 1235
-C sp23-cs425-4203.cs.illinois.edu 1236
-D sp23-cs425-4204.cs.illinois.edu 1237
-E sp23-cs425-4205.cs.illinois.edu 1238
+A 172.22.158.138 1234
+B 172.22.94.138 1235
+C 172.22.156.141 1236
+D 172.22.158.139 1237
+E 172.22.94.139 1238
