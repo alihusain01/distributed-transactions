@@ -84,7 +84,7 @@ func handleIncomingConnections(listener net.Listener) {
                 return
             }
         }(conn)
-		
+
         if connectionCount >= numServers {
             break
         }
@@ -130,8 +130,8 @@ func main() {
     defer listener.Close()
     fmt.Printf("Server started on port %s\n", currentServer.Port)
 
-    go handleIncomingConnections(listener, len(servers))
-    establishConnections(servers)
+    go establishConnections(servers)
+    handleIncomingConnections(listener)
 
     fmt.Printf("Branch %s has been successfully connected to all servers.\n", branch)
 }
