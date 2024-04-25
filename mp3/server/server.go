@@ -64,6 +64,9 @@ func establishConnections(servers []Server) {
 
 func handleIncomingConnections(listener net.Listener, servers []Server) {
     for {
+		if len(connectedServers) >= numServers {
+            return
+        }
         conn, err := listener.Accept()
         if err != nil {
             fmt.Println("Failed to accept connection:", err)
