@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+var connectedServers = make(map[string]bool)
+var branch string // Branch of the server
+
 type Server struct {
 	Name string
 	Host string
@@ -44,7 +47,6 @@ func readConfigFile(filename string) ([]Server, error) {
 
 // Function to establish connections to servers
 func establishConnections(servers []Server) {
-	connectedServers := make(map[string]bool)
 	for {
 		for _, server := range servers {
 			if connectedServers[server.Name] {
