@@ -94,7 +94,7 @@ func handleIncomingConnections(listener net.Listener, servers []Server) {
         }(conn)
 
         if len(connectedServers) >= numServers {
-            break
+            return
         }
     }
 }
