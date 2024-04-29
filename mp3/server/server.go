@@ -2,14 +2,13 @@ package main
 
 import (
 	"bufio"
+	"encoding/gob"
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
-	"encoding/gob"
-	// "sync"
-	// "strconv"
 )
 
 var connectedServers = make(map[string]Server)
@@ -18,11 +17,11 @@ var currentServer Server
 var decoders = make(map[string]*gob.Decoder)
 var encoders = make(map[string]*gob.Encoder)
 
-var accounts = make(map[string]int)									// List of accounts and their balances.
+var accounts = make(map[string]int) // List of accounts and their balances.
 
-var readTimestamps = make(map[string]float64) 						// List of transaction ids (timestamps) that have read the committed value.
-var latestWriteTimeStamp = make(map[string]float64)					// List of transaction ids (timestamps) that have written the committed value.
-var tentativeWriteTimestamps = make(map[string][]TentativeWrites)	// List of tentative writes sorted by the corresponding transaction ids (timestamps)
+var readTimestamps = make(map[string]float64)                     // List of transaction ids (timestamps) that have read the committed value.
+var latestWriteTimeStamp = make(map[string]float64)               // List of transaction ids (timestamps) that have written the committed value.
+var tentativeWriteTimestamps = make(map[string][]TentativeWrites) // List of tentative writes sorted by the corresponding transaction ids (timestamps)
 
 type Server struct {
 	Name string
@@ -32,17 +31,17 @@ type Server struct {
 }
 
 type TentativeWrites struct {
-	transactionID          float64
-	Balance     		   int
-	IsCommitted			   bool
+	transactionID float64
+	Balance       int
+	IsCommitted   bool
 }
 
 type Transaction struct {
-	MessageType string
+	MessageType   string
 	TargetServer  string
 	TargetAccount string
-	Amount  int
-	ID      float64
+	Amount        int
+	ID            float64
 }
 
 func main() {
@@ -222,12 +221,12 @@ func transactionFromCoordinator(conn net.Conn) {
 func transactionHandler(transaction Transaction) string {
 	if transaction.MessageType == "DEPOSIT" {
 		return handleDeposit(transaction)
+	} else if transaction.MessageType == "WITHDRAW" {
+		return handleWithdrawal(transaction)
+	} else if transaction.MessageType == "BALANCE" {
+		return handleBalance(transaction)
 	}
-	// } else if transaction.MessageType == "WITHDRAW" {
-	// 	return handleWithdrawal(transaction)
-	// } else if transaction.MessageType == "BALANCE" {
-	// 	return handleBalance(transaction)
-	// } else if transaction.MessageType == "COMMIT" {
+	//  else if transaction.MessageType == "COMMIT" {
 	// 	//TODO: Commit transaction
 	// 	return "OK"
 	// } else {
@@ -269,7 +268,7 @@ func handleDeposit(transaction Transaction) string {
 							break
 						}
 					}
-				} 
+				}
 				return "OK"
 			} else {
 				return "ABORTED"
@@ -286,37 +285,98 @@ func handleDeposit(transaction Transaction) string {
 	} else {
 		return "ABORTED"
 	}
-	return "ABORTED"
 }
 
 func handleWithdrawal(transaction Transaction) string {
-	// Check if the transaction timestamp is valid for a write operation
-	if transaction.ID > readTimestamps[transaction.TargetAccount] {
-		// Update the balance if the transaction timestamp is greater than the latest write timestamp
-		if transaction.ID > latestWriteTimeStamp[transaction.TargetAccount] {
-			latestWriteTimeStamp[transaction.TargetAccount] = transaction.ID
-			// Update the balance if it doesn't result in a negative balance
-			balance := tentativeWriteTimestamps[transaction.TargetAccount]
-			newBalance := balance[len(balance)-1].Balance - transaction.Amount
-			if newBalance >= 0 {
-				balance = append(balance, TentativeWrites{transaction.ID, newBalance, false})
-				tentativeWriteTimestamps[transaction.TargetAccount] = balance
-				return "OK"
+	var final_balance int
+	if transaction.ID > latestWriteTimeStamp[transaction.TargetAccount] {
+		for i := 0; i < len(tentativeWriteTimestamps[transaction.TargetAccount]); i++ {
+			if tentativeWriteTimestamps[transaction.TargetAccount][i].transactionID <= transaction.ID {
+				if tentativeWriteTimestamps[transaction.TargetAccount][i].IsCommitted {
+					final_balance = tentativeWriteTimestamps[transaction.TargetAccount][i].Balance
+					if transaction.ID > readTimestamps[transaction.TargetAccount] {
+						readTimestamps[transaction.TargetAccount] = transaction.ID
+					}
+				} else {
+					if tentativeWriteTimestamps[transaction.TargetAccount][i].transactionID == transaction.ID {
+						final_balance = tentativeWriteTimestamps[transaction.TargetAccount][i].Balance
+					} else {
+						// Reapply read rule TODO: Add wait until the transaction that wrote Ds is committed or aborted
+						return handleDeposit(transaction)
+					}
+				}
 			}
-			return "ABORTED"
 		}
+
+		if _, ok := accounts[transaction.TargetAccount]; ok {
+			if transaction.ID >= readTimestamps[transaction.TargetAccount] && transaction.ID >= latestWriteTimeStamp[transaction.TargetAccount] {
+				//Perform a tentative write on D: If Tc already has an entry in the TW list for D, update it. Else, add Tc and its write value to the TW list.
+				if _, alright := tentativeWriteTimestamps[transaction.TargetAccount]; !alright {
+					tentativeWriteTimestamps[transaction.TargetAccount] = append(tentativeWriteTimestamps[transaction.TargetAccount], TentativeWrites{transaction.ID, final_balance - transaction.Amount, false})
+				} else {
+					for i := 0; i < len(tentativeWriteTimestamps[transaction.TargetAccount]); i++ {
+						if tentativeWriteTimestamps[transaction.TargetAccount][i].transactionID == transaction.ID {
+							tentativeWriteTimestamps[transaction.TargetAccount][i].Balance = final_balance - transaction.Amount
+							break
+						}
+					}
+				}
+				return "OK"
+			} else {
+				return "ABORTED"
+			}
+		} else {
+			accounts[transaction.TargetAccount] = 0
+			if transaction.ID >= readTimestamps[transaction.TargetAccount] && transaction.ID > latestWriteTimeStamp[transaction.TargetAccount] {
+				tentativeWriteTimestamps[transaction.TargetAccount] = append(tentativeWriteTimestamps[transaction.TargetAccount], TentativeWrites{transaction.ID, transaction.Amount, false})
+				return "OK"
+			} else {
+				return "ABORTED"
+			}
+		}
+	} else {
 		return "ABORTED"
 	}
-	return "ABORTED"
 }
 
 func handleBalance(transaction Transaction) string {
-	// Check if the transaction timestamp is valid for a read operation
+	var final_balance = 0
 	if transaction.ID > latestWriteTimeStamp[transaction.TargetAccount] {
-		readTimestamps[transaction.TargetAccount] = transaction.ID
-		// Return the current balance
-		balance := tentativeWriteTimestamps[transaction.TargetAccount]
-		return fmt.Sprintf("%d", balance[len(balance)-1].Balance)
+		//search across the committed timestamp and the TW list for object D, where D.ID <= transaction.ID
+		for i := 0; i < len(tentativeWriteTimestamps[transaction.TargetAccount]); i++ {
+			if tentativeWriteTimestamps[transaction.TargetAccount][i].transactionID <= transaction.ID {
+				if tentativeWriteTimestamps[transaction.TargetAccount][i].IsCommitted {
+					final_balance = tentativeWriteTimestamps[transaction.TargetAccount][i].Balance
+					if transaction.ID > readTimestamps[transaction.TargetAccount] {
+						readTimestamps[transaction.TargetAccount] = transaction.ID
+					}
+				} else {
+					if tentativeWriteTimestamps[transaction.TargetAccount][i].transactionID == transaction.ID {
+						final_balance = tentativeWriteTimestamps[transaction.TargetAccount][i].Balance
+					} else {
+						// Reapply read rule TODO: Add wait until the transaction that wrote Ds is committed or aborted
+						return handleBalance(transaction)
+					}
+				}
+			}
+		}
+
+		if final_balance != 0 {
+			return transaction.TargetServer + "." + transaction.TargetAccount + " " + strconv.Itoa(final_balance)
+		}
+
+		// If no tentative write found, return the committed balance if it exists
+		acct, ok := accounts[transaction.TargetAccount]
+		if ok {
+			if transaction.ID > readTimestamps[transaction.TargetAccount] {
+				readTimestamps[transaction.TargetAccount] = transaction.ID
+			}
+			return transaction.TargetServer + "." + transaction.TargetAccount + " " + strconv.Itoa(acct)
+		} else {
+			// ACCOUNT NOT FOUND
+			return "NOT FOUND, ABORTED"
+		}
+	} else {
+		return "ABORTED"
 	}
-	return "ABORTED"
 }
