@@ -15,14 +15,26 @@ import (
 var connectedServers = make(map[string]Server)
 var currentServer Server
 
-var encoders = make(map[string]*gob.Encoder)
 var decoders = make(map[string]*gob.Decoder)
+var encoders = make(map[string]*gob.Encoder)
+
+var accounts = make(map[string]int)									// List of accounts and their balances.
+
+var readTimestamps = make(map[string]float64) 						// List of transaction ids (timestamps) that have read the committed value.
+var latestWriteTimeStamp = make(map[string]float64)					// List of transaction ids (timestamps) that have written the committed value.
+var tentativeWriteTimestamps = make(map[string][]TentativeWrites)	// List of tentative writes sorted by the corresponding transaction ids (timestamps)
 
 type Server struct {
 	Name string
 	Host string
 	Port string
 	Conn net.Conn
+}
+
+type TentativeWrites struct {
+	transactionID          float64
+	Balance     		   int
+	IsCommitted			   bool
 }
 
 type Transaction struct {
@@ -112,7 +124,7 @@ func establishConnections(servers []Server) {
 			for {
 				conn, err := net.Dial("tcp", server.Host+":"+server.Port)
 				if err != nil {
-					fmt.Printf("Error connecting to %s at %s on port %s: %s\n", server.Name, server.Host, server.Port, err)
+					// fmt.Printf("Error connecting to %s at %s on port %s: %s\n", server.Name, server.Host, server.Port, err)
 				} else {
 					connectedServers[server.Name] = Server{Name: server.Name, Host: server.Host, Port: server.Port, Conn: server.Conn}
 					fmt.Printf("Connected to %s at %s on port %s\n", server.Name, server.Host, server.Port)
@@ -167,12 +179,11 @@ func transactionFromClient(conn net.Conn) {
 		fmt.Println("Received transaction from Client", transaction)
 
 		if transaction.MessageType == "COMMIT" {
+			//TODO: Commit transaction
 			fmt.Println("Received COMMIT command from client. Committing transaction.")
 		} else if transaction.TargetServer == currentServer.Name {
-			// Coordinator is intended recipient of transaction
-			response = handleTransaction(transaction)
+			response = transactionHandler(transaction)
 		} else {
-			// Send the transaction to the corresponding server and await response.
 			serverEncoder := encoders[transaction.TargetServer]
 			serverEncoder.Encode(transaction)
 
@@ -181,12 +192,10 @@ func transactionFromClient(conn net.Conn) {
 			fmt.Println("Received response from corresponding server: ", response)
 		}
 
-		// Abort transaction
 		if response == "ABORT" || response == "NOT FOUND, ABORTED" || response == "ABORTED" {
 			fmt.Println("Server failed to handle transaction. Aborting and rolling back state.")
 		}
 
-		// Reply back to client
 		clientEncoder.Encode(response)
 	}
 }
@@ -204,12 +213,110 @@ func transactionFromCoordinator(conn net.Conn) {
 		}
 
 		fmt.Println("Received transaction from coordinator: ", transaction)
-		response := handleTransaction(transaction)
+		response := transactionHandler(transaction)
 
 		serverEncoder.Encode(response)
 	}
 }
 
-func handleTransaction(transaction Transaction) string {
+func transactionHandler(transaction Transaction) string {
+	if transaction.MessageType == "DEPOSIT" {
+		return handleDeposit(transaction)
+	}
+	// } else if transaction.MessageType == "WITHDRAW" {
+	// 	return handleWithdrawal(transaction)
+	// } else if transaction.MessageType == "BALANCE" {
+	// 	return handleBalance(transaction)
+	// } else if transaction.MessageType == "COMMIT" {
+	// 	//TODO: Commit transaction
+	// 	return "OK"
+	// } else {
+	// 	return "ABORTED"
+	// }
+	return "ABORTED"
+}
+
+func handleDeposit(transaction Transaction) string {
+	var final_balance int
+	if transaction.ID > latestWriteTimeStamp[transaction.TargetAccount] {
+		for i := 0; i < len(tentativeWriteTimestamps[transaction.TargetAccount]); i++ {
+			if tentativeWriteTimestamps[transaction.TargetAccount][i].transactionID <= transaction.ID {
+				if tentativeWriteTimestamps[transaction.TargetAccount][i].IsCommitted {
+					final_balance = tentativeWriteTimestamps[transaction.TargetAccount][i].Balance
+					if transaction.ID > readTimestamps[transaction.TargetAccount] {
+						readTimestamps[transaction.TargetAccount] = transaction.ID
+					}
+				} else {
+					if tentativeWriteTimestamps[transaction.TargetAccount][i].transactionID == transaction.ID {
+						final_balance = tentativeWriteTimestamps[transaction.TargetAccount][i].Balance
+					} else {
+						// Reapply read rule TODO: Add wait until the transaction that wrote Ds is committed or aborted
+						handleDeposit(transaction)
+					}
+				}
+			}
+		}
+
+		if _, ok := accounts[transaction.TargetAccount]; ok {
+			if transaction.ID >= readTimestamps[transaction.TargetAccount] && transaction.ID >= latestWriteTimeStamp[transaction.TargetAccount] {
+				//Perform a tentative write on D: If Tc already has an entry in the TW list for D, update it. Else, add Tc and its write value to the TW list.
+				if _, alright := tentativeWriteTimestamps[transaction.TargetAccount]; !alright {
+					tentativeWriteTimestamps[transaction.TargetAccount] = append(tentativeWriteTimestamps[transaction.TargetAccount], TentativeWrites{transaction.ID, final_balance + transaction.Amount, false})
+				} else {
+					for i := 0; i < len(tentativeWriteTimestamps[transaction.TargetAccount]); i++ {
+						if tentativeWriteTimestamps[transaction.TargetAccount][i].transactionID == transaction.ID {
+							tentativeWriteTimestamps[transaction.TargetAccount][i].Balance = final_balance + transaction.Amount
+							break
+						}
+					}
+				} 
+				return "OK"
+			} else {
+				return "ABORTED"
+			}
+		} else {
+			accounts[transaction.TargetAccount] = 0
+			if transaction.ID >= readTimestamps[transaction.TargetAccount] && transaction.ID > latestWriteTimeStamp[transaction.TargetAccount] {
+				tentativeWriteTimestamps[transaction.TargetAccount] = append(tentativeWriteTimestamps[transaction.TargetAccount], TentativeWrites{transaction.ID, transaction.Amount, false})
+				return "OK"
+			} else {
+				return "ABORTED"
+			}
+		}
+	} else {
+		return "ABORTED"
+	}
+	return "ABORTED"
+}
+
+func handleWithdrawal(transaction Transaction) string {
+	// Check if the transaction timestamp is valid for a write operation
+	if transaction.ID > readTimestamps[transaction.TargetAccount] {
+		// Update the balance if the transaction timestamp is greater than the latest write timestamp
+		if transaction.ID > latestWriteTimeStamp[transaction.TargetAccount] {
+			latestWriteTimeStamp[transaction.TargetAccount] = transaction.ID
+			// Update the balance if it doesn't result in a negative balance
+			balance := tentativeWriteTimestamps[transaction.TargetAccount]
+			newBalance := balance[len(balance)-1].Balance - transaction.Amount
+			if newBalance >= 0 {
+				balance = append(balance, TentativeWrites{transaction.ID, newBalance, false})
+				tentativeWriteTimestamps[transaction.TargetAccount] = balance
+				return "OK"
+			}
+			return "ABORTED"
+		}
+		return "ABORTED"
+	}
+	return "ABORTED"
+}
+
+func handleBalance(transaction Transaction) string {
+	// Check if the transaction timestamp is valid for a read operation
+	if transaction.ID > latestWriteTimeStamp[transaction.TargetAccount] {
+		readTimestamps[transaction.TargetAccount] = transaction.ID
+		// Return the current balance
+		balance := tentativeWriteTimestamps[transaction.TargetAccount]
+		return fmt.Sprintf("%d", balance[len(balance)-1].Balance)
+	}
 	return "ABORTED"
 }

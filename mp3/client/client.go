@@ -60,7 +60,7 @@ func main() {
 		if input == "BEGIN" {
 			fmt.Println("OK")
 			connectToCoordinator()
-			enterTransactions()
+			startTransactions()
 		}
 	}
 }
@@ -107,11 +107,11 @@ func connectToCoordinator() {
 
 }
 
-func enterTransactions() {
-	txID := float64(time.Now().UnixNano()) / 1e9
-  
-	encoder := gob.NewEncoder(currentConnection)
-	decoder := gob.NewDecoder(currentConnection)
+func startTransactions() {
+	currentDecoder := gob.NewDecoder(currentConnection)
+	currentEncoder := gob.NewEncoder(currentConnection)
+
+	transactionID := float64(time.Now().UnixNano()) / 1e9
   
 	defer currentConnection.Close()
   
@@ -120,38 +120,36 @@ func enterTransactions() {
 	  if !scanner.Scan() {
 		break
 	  }
-  
-	  // Formatting user input into Transaction and sending it to coordinator
+
 	  input := strings.Split(scanner.Text(), " ")
-	  var command, branch, account string
+	  var messageType, targetServer, targetAccount string
 	  var amount int
   
-	  command = input[0]
+	  messageType = input[0]
   
-	  if command == "COMMIT" {
-		branch, account = "", ""
+	  if messageType == "COMMIT" {
+		targetServer, targetAccount = "", ""
 		amount = 0
 	  }
   
-	  if command == "BALANCE" {
+	  if messageType == "BALANCE" {
 		temp := strings.Split(input[1], ".")
-		branch, account = temp[0], temp[1]
+		targetServer, targetAccount = temp[0], temp[1]
 		amount = 0
 	  }
   
-	  // If the command is WITHDRAW or DEPOSIT, check for amount. Used to avoid index out of bounds.
-	  if command == "WITHDRAW" || command == "DEPOSIT" {
+	  if messageType == "DEPOSIT" || messageType == "WITHDRAW" {
 		temp := strings.Split(input[1], ".")
-		branch, account = temp[0], temp[1]
+		targetServer, targetAccount = temp[0], temp[1]
 		amount, _ = strconv.Atoi(input[2])
 	  }
   
-	  var transaction = Transaction{MessageType: command, TargetServer: branch, TargetAccount: account, Amount: amount, ID: txID}
-	  encoder.Encode(transaction)
+	  var transaction = Transaction{MessageType: messageType, TargetServer: targetServer, TargetAccount: targetAccount, Amount: amount, ID: transactionID}
+	  currentEncoder.Encode(transaction)
   
 	  // Await reply from server
 	  var response string
-	  err := decoder.Decode(&response)
+	  err := currentDecoder.Decode(&response)
   
 	  if err != nil {
 		fmt.Println("Failed to receive response from coordinator.", err)
