@@ -222,7 +222,7 @@ func transactionHandler(transaction Transaction) string {
 	if transaction.MessageType == "DEPOSIT" {
 		return handleDeposit(transaction)
 	} else if transaction.MessageType == "WITHDRAW" {
-		return handleWithdrawal(transaction)
+		return handleWithdraw(transaction)
 	} else if transaction.MessageType == "BALANCE" {
 		return handleBalance(transaction)
 	}
