@@ -7,17 +7,76 @@ import (
 	"os"
 	"strings"
 	"time"
+	"encoding/gob"
+	// "sync"
+	// "strconv"
 )
 
 var connectedServers = make(map[string]Server)
 var currentServer Server
-var numServers int
+
+var encoders = make(map[string]*gob.Encoder)
+var decoders = make(map[string]*gob.Decoder)
 
 type Server struct {
 	Name string
 	Host string
 	Port string
 	Conn net.Conn
+}
+
+type Transaction struct {
+	MessageType string
+	TargetServer  string
+	TargetAccount string
+	Amount  int
+	ID      float64
+}
+
+func main() {
+	args := os.Args[1:]
+
+	if len(args) != 2 {
+		fmt.Println("You must provide exactly two arguments: a branch (A-E) and a config file.")
+		os.Exit(1)
+	}
+
+	branch := args[0]
+	configFile := args[1]
+
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		fmt.Println("The specified config file does not exist.")
+		os.Exit(1)
+	}
+
+	servers, err := readConfigFile(configFile)
+
+	if err != nil {
+		fmt.Println("Error reading config file:", err)
+		return
+	}
+
+	for _, server := range servers {
+		if server.Name == branch {
+			currentServer = server
+			break
+		}
+	}
+
+	listener, err := net.Listen("tcp", ":"+currentServer.Port)
+	if err != nil {
+		fmt.Printf("Error starting server on port %s: %s\n", currentServer.Port, err)
+		os.Exit(1)
+	}
+	fmt.Printf("Server started on port %s\n", currentServer.Port)
+
+	go establishConnections(servers)
+	handleIncomingConnections(listener, servers)
+
+	fmt.Printf("Branch %s has been successfully connected to all servers.\n", branch)
+
+	time.Sleep(3 * time.Second)
+	handleIncomingConnections(listener, nil)
 }
 
 func readConfigFile(filename string) ([]Server, error) {
@@ -50,93 +109,107 @@ func readConfigFile(filename string) ([]Server, error) {
 func establishConnections(servers []Server) {
 	for _, server := range servers {
 		if _, ok := connectedServers[server.Name]; !ok {
-			conn, err := net.Dial("tcp", server.Host+":"+server.Port)
-			if err != nil {
-				fmt.Printf("Error connecting to %s at %s on port %s: %s\n", server.Name, server.Host, server.Port, err)
-				time.Sleep(1 * time.Second)
-				continue
+			for {
+				conn, err := net.Dial("tcp", server.Host+":"+server.Port)
+				if err != nil {
+					fmt.Printf("Error connecting to %s at %s on port %s: %s\n", server.Name, server.Host, server.Port, err)
+				} else {
+					connectedServers[server.Name] = Server{Name: server.Name, Host: server.Host, Port: server.Port, Conn: server.Conn}
+					fmt.Printf("Connected to %s at %s on port %s\n", server.Name, server.Host, server.Port)
+					encoders[server.Name] = gob.NewEncoder(conn)
+					decoders[server.Name] = gob.NewDecoder(conn)
+					break
+				}
 			}
-			connectedServers[server.Name] = Server{Name: server.Name, Host: server.Host, Port: server.Port, Conn: conn}
-			fmt.Printf("Connected to %s at %s on port %s\n", server.Name, server.Host, server.Port)
 		}
 	}
 }
 
 func handleIncomingConnections(listener net.Listener, servers []Server) {
-	for {
-		conn, err := listener.Accept()
-
-		if err != nil {
-			fmt.Println("Failed to accept connection:", err)
-			continue
+	if servers == nil {
+		fmt.Println("Now listening on TCP port: " + currentServer.Port + "\n")
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				fmt.Println("Failed to connect to client with err: ", err)
+			}
+			go transactionFromClient(conn)
 		}
+	} else {
+		count := 0
+		for {
+			conn, _ := listener.Accept()
+			count++
 
-		remoteAddr := c.RemoteAddr().String()
-		parts := strings.Split(remoteAddr, ":")
-		host := parts[0]
-		// Search through servers to find the matching server by IP
-		found := false
-		for _, server := range servers {
-			if server.Host == host {
-				server.Conn = c                        // Update the connection in the server struct
-				connectedServers[server.Name] = server // Store by server name instead of host IP
-				fmt.Printf("Added new connected server: %s at %s\n", server.Name, server.Host)
-				found = true
+			go transactionFromCoordinator(conn)
+
+			if count >= len(servers) {
 				break
 			}
-		}
-
-		if !found {
-			fmt.Printf("Received connection from unknown host: %s\n", host)
-		}
-		if len(connectedServers) >= numServers {
-			fmt.Println("All expected connections have been established.")
-			return
 		}
 	}
 }
 
-func main() {
-	args := os.Args[1:]
+func transactionFromClient(conn net.Conn) {
+	fmt.Println("Successfully connected to client. Awaiting transaction.")
+	clientDecoder := gob.NewDecoder(conn)
+	clientEncoder := gob.NewEncoder(conn)
+	for {
+		var transaction Transaction
+		var response string
 
-	if len(args) != 2 {
-		fmt.Println("You must provide exactly two arguments: a branch (A-E) and a config file.")
-		os.Exit(1)
-	}
-
-	branch := args[0]
-	configFile := args[1]
-
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		fmt.Println("The specified config file does not exist.")
-		os.Exit(1)
-	}
-
-	servers, err := readConfigFile(configFile)
-	numServers = len(servers)
-
-	if err != nil {
-		fmt.Println("Error reading config file:", err)
-		return
-	}
-
-	for _, server := range servers {
-		if server.Name == branch {
-			currentServer = server
-			break
+		err := clientDecoder.Decode(&transaction)
+		if err != nil {
+			fmt.Println("Failed to receive transaction from client: ", err)
+			return
 		}
+
+		fmt.Println("Received transaction from Client", transaction)
+
+		if transaction.MessageType == "COMMIT" {
+			fmt.Println("Received COMMIT command from client. Committing transaction.")
+		} else if transaction.TargetServer == currentServer.Name {
+			// Coordinator is intended recipient of transaction
+			response = handleTransaction(transaction)
+		} else {
+			// Send the transaction to the corresponding server and await response.
+			serverEncoder := encoders[transaction.TargetServer]
+			serverEncoder.Encode(transaction)
+
+			serverDecoder := decoders[transaction.TargetServer]
+			serverDecoder.Decode(&response)
+			fmt.Println("Received response from corresponding server: ", response)
+		}
+
+		// Abort transaction
+		if response == "ABORT" || response == "NOT FOUND, ABORTED" || response == "ABORTED" {
+			fmt.Println("Server failed to handle transaction. Aborting and rolling back state.")
+		}
+
+		// Reply back to client
+		clientEncoder.Encode(response)
 	}
+}
 
-	listener, err := net.Listen("tcp", ":"+currentServer.Port)
-	if err != nil {
-		fmt.Printf("Error starting server on port %s: %s\n", currentServer.Port, err)
-		os.Exit(1)
+func transactionFromCoordinator(conn net.Conn) {
+	serverDecoder := gob.NewDecoder(conn)
+	serverEncoder := gob.NewEncoder(conn)
+	for {
+		var transaction Transaction
+		err := serverDecoder.Decode(&transaction)
+
+		if err != nil {
+			fmt.Println("Failed to receive transaction from coordinator", err)
+			return
+		}
+
+		fmt.Println("Received transaction from coordinator: ", transaction)
+		response := handleTransaction(transaction)
+
+		serverEncoder.Encode(response)
 	}
-	defer listener.Close()
-	fmt.Printf("Server started on port %s\n", currentServer.Port)
+}
 
-	go establishConnections(servers)
-	handleIncomingConnections(listener, servers)
-
-	fmt.Printf("Branch %s has been successfully connected to all servers.\n", branch)
+func handleTransaction(transaction Transaction) string {
+	return "ABORTED"
 }
