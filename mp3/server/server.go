@@ -250,7 +250,7 @@ func handleDeposit(transaction Transaction) string {
 						final_balance = tentativeWriteTimestamps[transaction.TargetAccount][i].Balance
 					} else {
 						// Reapply read rule TODO: Add wait until the transaction that wrote Ds is committed or aborted
-						handleDeposit(transaction)
+						return handleDeposit(transaction)
 					}
 				}
 			}
