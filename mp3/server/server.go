@@ -287,7 +287,7 @@ func handleDeposit(transaction Transaction) string {
 	}
 }
 
-func handleWithdrawal(transaction Transaction) string {
+func handleWithdraw(transaction Transaction) string {
 	var final_balance int
 	if transaction.ID > latestWriteTimeStamp[transaction.TargetAccount] {
 		for i := 0; i < len(tentativeWriteTimestamps[transaction.TargetAccount]); i++ {
@@ -302,7 +302,7 @@ func handleWithdrawal(transaction Transaction) string {
 						final_balance = tentativeWriteTimestamps[transaction.TargetAccount][i].Balance
 					} else {
 						// Reapply read rule TODO: Add wait until the transaction that wrote Ds is committed or aborted
-						return handleDeposit(transaction)
+						return handleWithdraw(transaction)
 					}
 				}
 			}
