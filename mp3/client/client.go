@@ -127,7 +127,7 @@ func startTransactions() {
   
 	  messageType = input[0]
   
-	  if messageType == "COMMIT" {
+	  if messageType == "COMMIT" || messageType == "ABORT" {
 		targetServer, targetAccount = "", ""
 		amount = 0
 	  }
@@ -156,7 +156,7 @@ func startTransactions() {
 		os.Exit(1)
 	  }
   
-	  if response == "ABORT" || response == "NOT FOUND, ABORTED" || response == "COMMIT OK" {
+	  if response == "ABORTED" || response == "NOT FOUND, ABORTED" || response == "COMMIT OK" {
 		fmt.Println(response)
 		os.Exit(1)
 	  }
