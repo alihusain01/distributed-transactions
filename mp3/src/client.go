@@ -52,7 +52,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("Type 'BEGIN' to initiate a connection.")
+	// fmt.Println("Type 'BEGIN' to initiate a connection.")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
@@ -99,9 +99,9 @@ func connectToCoordinator() {
 	
 		conn, err := net.Dial("tcp", serverInfo.Host+":"+serverInfo.Port)
 		if err != nil {
-			fmt.Println("Failed to connect to selected coordinator server: ", randIndex)
+			// fmt.Println("Failed to connect to selected coordinator server: ", randIndex)
 		}else{
-			fmt.Println("Connected to coordinator server: ", randIndex)
+			// fmt.Println("Connected to coordinator server: ", randIndex)
 			currentConnection = conn
 			break
 		}
@@ -154,12 +154,12 @@ func startTransactions() {
   
 	  if err != nil {
 		fmt.Println("Failed to receive response from coordinator.", err)
-		os.Exit(1)
+		os.Exit(0)
 	  }
   
 	  if response == "ABORTED" || response == "NOT FOUND, ABORTED" || response == "COMMIT OK" {
 		fmt.Println(response)
-		os.Exit(1)
+		os.Exit(0)
 	  }
   
 	  fmt.Println(response)
