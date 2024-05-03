@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -23,8 +22,6 @@ var accounts = make(map[string]int) // List of accounts and their balances.
 var readTimestamps = make(map[string]float64)                     // List of transaction ids (timestamps) that have read the committed value.
 var latestWriteTimeStamp = make(map[string]float64)               // List of transaction ids (timestamps) that have written the committed value.
 var tentativeWriteTimestamps = make(map[string][]TentativeWrites) // List of tentative writes sorted by the corresponding transaction ids (timestamps)
-
-var locks = make(map[string]*sync.Mutex)
 
 type Server struct {
 	Name string
@@ -122,7 +119,6 @@ func readConfigFile(filename string) ([]Server, error) {
 }
 
 func establishConnections(servers []Server) {
-	time.Sleep(5 * time.Millisecond)
 	for _, server := range servers {
 		if _, ok := connectedServers[server.Name]; !ok {
 			for {
@@ -143,6 +139,7 @@ func establishConnections(servers []Server) {
 
 func handleIncomingConnections(listener net.Listener, servers []Server) {
 	if servers == nil {
+		fmt.Println("Now listening on TCP port: " + currentServer.Port + "\n")
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
@@ -166,9 +163,9 @@ func handleIncomingConnections(listener net.Listener, servers []Server) {
 }
 
 func transactionFromClient(conn net.Conn) {
+	fmt.Println("Successfully connected to client. Awaiting transaction.")
 	clientDecoder := gob.NewDecoder(conn)
 	clientEncoder := gob.NewEncoder(conn)
-	fmt.Println("Successfully connected to client. Awaiting transaction.")
 	for {
 		var transaction Transaction
 		responseChan := make(chan string)
@@ -184,6 +181,7 @@ func transactionFromClient(conn net.Conn) {
 		if transaction.MessageType == "COMMIT" {
 			//TODO: Commit transaction
 			fmt.Println("Received COMMIT command from client. Committing transaction.")
+
 			go handleCommit(transaction, responseChan)
 		} else if transaction.MessageType == "ABORT" {
 			fmt.Println("Received ABORT command from client. Aborting transaction.")
@@ -199,31 +197,23 @@ func transactionFromClient(conn net.Conn) {
 		} else if transaction.TargetServer == currentServer.Name {
 			go transactionHandler(transaction, responseChan)
 		} else {
-			go func() {
-				serverEncoder := encoders[transaction.TargetServer]
-				serverEncoder.Encode(transaction)
+			serverEncoder := encoders[transaction.TargetServer]
+			serverEncoder.Encode(transaction)
 
-				var dwb_response string
+			var dwb_response string;
 
-				serverDecoder := decoders[transaction.TargetServer]
-				serverDecoder.Decode(&dwb_response)
-
-				println("Received response from corresponding server: ", dwb_response)
-				responseChan <- dwb_response
-				fmt.Println("Received response from corresponding server: ", dwb_response)
-			}()
+			serverDecoder := decoders[transaction.TargetServer]
+			serverDecoder.Decode(&dwb_response)
+			fmt.Println("Received response from corresponding server: ", dwb_response)
 		}
 
-		print("BP25")
 		response := <-responseChan
-		print("BP26")
 
 		if response == "ABORT" || response == "NOT FOUND, ABORTED" || response == "ABORTED" {
 			fmt.Println("Response from server: ", response)
 		}
 
 		clientEncoder.Encode(response)
-
 	}
 }
 
@@ -232,6 +222,7 @@ func transactionFromCoordinator(conn net.Conn) {
 	serverEncoder := gob.NewEncoder(conn)
 	for {
 		var transaction Transaction
+		responseChan := make(chan string)
 		err := serverDecoder.Decode(&transaction)
 
 		if err != nil {
@@ -240,20 +231,15 @@ func transactionFromCoordinator(conn net.Conn) {
 		}
 
 		fmt.Println("Received transaction from coordinator: ", transaction)
-		go func() {
-			responseChan := make(chan string)
-			println("sending response channel: ", responseChan)
-			go transactionHandler(transaction, responseChan)
+		go transactionHandler(transaction, responseChan)
 
-			println("BP27")
-			response := <-responseChan
-			println("receivied response for transaction: ", transaction.ID, " response: ", response, " channel: ", responseChan)
-			serverEncoder.Encode(response)
-		}()
+		response := <-responseChan
+
+		serverEncoder.Encode(response)
 	}
 }
 
-func transactionHandler(transaction Transaction, responseChan chan<- string) {
+func transactionHandler(transaction Transaction, responseChan chan<- string){
 	if transaction.MessageType == "DEPOSIT" {
 		go handleDeposit(transaction, responseChan)
 	} else if transaction.MessageType == "WITHDRAW" {
@@ -270,26 +256,18 @@ func transactionHandler(transaction Transaction, responseChan chan<- string) {
 }
 
 func handleDeposit(transaction Transaction, responseChan chan<- string) {
-	final_balance := -66
+	var final_balance int
 	fmt.Println("Latest write timestamp: ", latestWriteTimeStamp[transaction.TargetAccount])
 
 	fmt.Println("First Deposit Check: ", accounts[transaction.TargetAccount])
-
-	lockUsed := false
 
 	if transaction.ID > latestWriteTimeStamp[transaction.TargetAccount] {
 		fmt.Println("bp1")
 		for {
 			target_tent_write := TentativeWrites{}
-
-			if _, ok := accounts[transaction.TargetAccount]; ok {
-				locks[transaction.TargetAccount].Lock()
-				lockUsed = true
-			}
-
 			for i := 0; i < len(tentativeWriteTimestamps[transaction.TargetAccount]); i++ {
 				if tentativeWriteTimestamps[transaction.TargetAccount][i].TransactionID <= transaction.ID {
-					// fmt.Println("bp2")
+					fmt.Println("bp2")
 					if tentativeWriteTimestamps[transaction.TargetAccount][i].IsCommitted {
 						fmt.Println("bp3")
 						final_balance = tentativeWriteTimestamps[transaction.TargetAccount][i].Balance
@@ -307,7 +285,7 @@ func handleDeposit(transaction Transaction, responseChan chan<- string) {
 							final_balance = tentativeWriteTimestamps[transaction.TargetAccount][i].Balance
 						} else {
 							// Reapply read rule TODO: Add wait until the transaction that wrote Ds is committed or aborted
-							// fmt.Println("Waiting for transaction to commit or abort inside of handleDeposit")
+							fmt.Println("Waiting for transaction to commit or abort inside of handleDeposit")
 
 							target_tent_write = tentativeWriteTimestamps[transaction.TargetAccount][i]
 							continue
@@ -321,27 +299,13 @@ func handleDeposit(transaction Transaction, responseChan chan<- string) {
 					}
 				}
 			}
-			if target_tent_write.IsCommitted || target_tent_write.IsAborted || len(tentativeWriteTimestamps[transaction.TargetAccount]) == 0 || final_balance != -66 {
-				fmt.Println("final balance: ", final_balance)
-				fmt.Println("len tws: ", len(tentativeWriteTimestamps[transaction.TargetAccount]))
-				print("breaking out of loop")
-				if lockUsed {
-					locks[transaction.TargetAccount].Unlock()
-				}
+			if target_tent_write.IsCommitted || target_tent_write.IsAborted || len(tentativeWriteTimestamps[transaction.TargetAccount]) == 0{
 				break
-			}
-			if lockUsed {
-				locks[transaction.TargetAccount].Unlock()
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
 
 		// If no tentative write found, final balance is the committed balance
-		if lockUsed {
-			locks[transaction.TargetAccount].Lock()
-			defer locks[transaction.TargetAccount].Unlock()
-		}
-
 		if len(tentativeWriteTimestamps[transaction.TargetAccount]) == 0 {
 			println("bp10")
 			final_balance = accounts[transaction.TargetAccount]
@@ -369,7 +333,6 @@ func handleDeposit(transaction Transaction, responseChan chan<- string) {
 						}
 					}
 				}
-				println("return response channel: ", responseChan)
 				responseChan <- "OK"
 				return
 			} else {
@@ -382,7 +345,6 @@ func handleDeposit(transaction Transaction, responseChan chan<- string) {
 			if transaction.ID >= readTimestamps[transaction.TargetAccount] && transaction.ID > latestWriteTimeStamp[transaction.TargetAccount] {
 				println("bp16")
 				tentativeWriteTimestamps[transaction.TargetAccount] = append(tentativeWriteTimestamps[transaction.TargetAccount], TentativeWrites{transaction.ID, transaction.Amount, false, false})
-				locks[transaction.TargetAccount] = &sync.Mutex{}
 				responseChan <- "OK"
 				return
 			} else {
@@ -402,15 +364,9 @@ func handleWithdrawal(transaction Transaction, responseChan chan<- string) {
 		return
 	}
 
-	final_balance := -66
+	var final_balance int
 	if transaction.ID > latestWriteTimeStamp[transaction.TargetAccount] {
 		for {
-			// Check again if the account does not exist
-			if _, ok := accounts[transaction.TargetAccount]; !ok {
-				responseChan <- "NOT FOUND, ABORTED"
-				return
-			}
-			locks[transaction.TargetAccount].Lock()
 			target_tent_write := TentativeWrites{}
 			for i := 0; i < len(tentativeWriteTimestamps[transaction.TargetAccount]); i++ {
 				if tentativeWriteTimestamps[transaction.TargetAccount][i].TransactionID <= transaction.ID {
@@ -446,27 +402,16 @@ func handleWithdrawal(transaction Transaction, responseChan chan<- string) {
 					}
 				}
 			}
-			if target_tent_write.IsCommitted || target_tent_write.IsAborted || len(tentativeWriteTimestamps[transaction.TargetAccount]) == 0 || final_balance != -66 {
-				locks[transaction.TargetAccount].Unlock()
+			if target_tent_write.IsCommitted || target_tent_write.IsAborted || len(tentativeWriteTimestamps[transaction.TargetAccount]) == 0{
 				break
 			}
-			locks[transaction.TargetAccount].Unlock()
 			time.Sleep(10 * time.Millisecond)
-		}
-
-		// If no tentative write found, final balance is the committed balance
-		locks[transaction.TargetAccount].Lock()
-		defer locks[transaction.TargetAccount].Unlock()
-
-		if len(tentativeWriteTimestamps[transaction.TargetAccount]) == 0 {
-			println("bp10")
-			final_balance = accounts[transaction.TargetAccount]
 		}
 
 		if _, ok := accounts[transaction.TargetAccount]; ok {
 			if transaction.ID >= readTimestamps[transaction.TargetAccount] && transaction.ID > latestWriteTimeStamp[transaction.TargetAccount] {
 				//Perform a tentative write on D: If Tc already has an entry in the TW list for D, update it. Else, add Tc and its write value to the TW list.
-				if len(tentativeWriteTimestamps[transaction.TargetAccount]) == 0 {
+				if _, alright := tentativeWriteTimestamps[transaction.TargetAccount]; !alright {
 					tentativeWriteTimestamps[transaction.TargetAccount] = append(tentativeWriteTimestamps[transaction.TargetAccount], TentativeWrites{transaction.ID, final_balance - transaction.Amount, false, false})
 				} else {
 					for i := 0; i < len(tentativeWriteTimestamps[transaction.TargetAccount]); i++ {
@@ -505,15 +450,9 @@ func handleBalance(transaction Transaction, responseChan chan<- string) {
 		return
 	}
 
-	var final_balance = -66
+	var final_balance = -1
 	if transaction.ID > latestWriteTimeStamp[transaction.TargetAccount] {
 		for {
-			// Check again if the account does not exist
-			if _, ok := accounts[transaction.TargetAccount]; !ok {
-				responseChan <- "NOT FOUND, ABORTED"
-				return
-			}
-			locks[transaction.TargetAccount].Lock()
 			target_tent_write := TentativeWrites{}
 			for i := 0; i < len(tentativeWriteTimestamps[transaction.TargetAccount]); i++ {
 				if tentativeWriteTimestamps[transaction.TargetAccount][i].TransactionID <= transaction.ID {
@@ -549,29 +488,23 @@ func handleBalance(transaction Transaction, responseChan chan<- string) {
 					}
 				}
 			}
-			if final_balance != -66 {
-				responseChan <- transaction.TargetServer + "." + transaction.TargetAccount + " " + strconv.Itoa(final_balance)
-				locks[transaction.TargetAccount].Unlock()
-				return
-			}
-			if target_tent_write.IsCommitted || target_tent_write.IsAborted || len(tentativeWriteTimestamps[transaction.TargetAccount]) == 0 {
-				locks[transaction.TargetAccount].Unlock()
+			if target_tent_write.IsCommitted || target_tent_write.IsAborted || len(tentativeWriteTimestamps[transaction.TargetAccount]) == 0{
 				break
 			}
-			locks[transaction.TargetAccount].Unlock()
 			time.Sleep(10 * time.Millisecond)
+		}
+
+		if final_balance != -1 {
+			responseChan <- transaction.TargetServer + "." + transaction.TargetAccount + " " + strconv.Itoa(final_balance)
+			return
 		}
 
 		// If no tentative write found, return the committed balance if it exists
 		acct, ok := accounts[transaction.TargetAccount]
-		locks[transaction.TargetAccount].Lock()
-		defer locks[transaction.TargetAccount].Unlock()
-
 		if ok {
 			if transaction.ID > readTimestamps[transaction.TargetAccount] {
 				readTimestamps[transaction.TargetAccount] = transaction.ID
 			}
-			print("Balance: BP6")
 			responseChan <- transaction.TargetServer + "." + transaction.TargetAccount + " " + strconv.Itoa(acct)
 			return
 		} else {
@@ -585,7 +518,7 @@ func handleBalance(transaction Transaction, responseChan chan<- string) {
 	}
 }
 
-func handleCommit(transaction Transaction, responseChan chan<- string) {
+func handleCommit(transaction Transaction, responseChan chan <- string) {
 	fmt.Println("Received Commit command from Client. Beginning 2 Phase Commit.")
 	// First Phase
 	transaction.MessageType = "PREPARE"
@@ -658,45 +591,45 @@ func handleCommit(transaction Transaction, responseChan chan<- string) {
 	return
 }
 
-func handlePrepare(transaction Transaction, responseChan chan<- string) {
-	fmt.Println("Received prepare message from coordinator: ", transaction)
-
-	// Checking if any of the balances become negative
-	for account, _ := range accounts {
-		locks[account].Lock()
-		for i := 0; i < len(tentativeWriteTimestamps[account]); i++ {
-			if tentativeWriteTimestamps[account][i].TransactionID == transaction.ID && !tentativeWriteTimestamps[account][i].IsCommitted {
-				if tentativeWriteTimestamps[account][i].Balance < 0 {
-					responseChan <- "ABORTED"
-					locks[account].Unlock()
-					return
-				}
+func handlePrepare(transaction Transaction, responseChan chan<- string){
+	// FIRST WAIT FOR ALL PREVIOUS TENTATIVE WRITES TO BE COMMITTED OR ABORTED
+	for i := 0; i < len(tentativeWriteTimestamps[transaction.TargetAccount]); i++ {
+		if !tentativeWriteTimestamps[transaction.TargetAccount][i].IsCommitted && tentativeWriteTimestamps[transaction.TargetAccount][i].TransactionID != transaction.ID {
+			fmt.Println("FAILED TO COMMIT. WAITING ON PREVIOUS TRANSACTIONS TO COMMIT.")
+			// TODO: Add wait until the transaction that wrote Ds is committed or aborted
+		} else {
+			if tentativeWriteTimestamps[transaction.TargetAccount][i].Balance < 0 {
+				fmt.Println("TRANSACTION RESULTS ON NEGATIVE BALANCE. CANNOT COMMIT.")
+				responseChan <- "ABORTED"
+				return
 			}
 		}
-		locks[account].Unlock()
+
 	}
+
+	fmt.Println("Received prepare message from coordinator: ", transaction)
+
 	// READY TO COMMIT
 	responseChan <- "OK"
 	return
 }
 
 func finalCommit(transaction Transaction, responseChan chan<- string) {
-	// Check if you should abort first
 	for account, _ := range accounts {
-		locks[account].Lock()
 		fmt.Println("Current TWL for Account ", account, ":", tentativeWriteTimestamps[account])
+
 		for i := 0; i < len(tentativeWriteTimestamps[account]); i++ {
 			if tentativeWriteTimestamps[account][i].TransactionID == transaction.ID && !tentativeWriteTimestamps[account][i].IsCommitted {
 				fmt.Println("Entry ", tentativeWriteTimestamps[account][i])
-				accounts[account] = tentativeWriteTimestamps[account][i].Balance
+				accounts[account] += tentativeWriteTimestamps[account][i].Balance
 				tentativeWriteTimestamps[account][i].IsCommitted = true
 				latestWriteTimeStamp[account] = transaction.ID
+				// Finished committing, need to add wait being done here
 
 				// Removing the tentative write timestamp from this list
 				tentativeWriteTimestamps[account] = append(tentativeWriteTimestamps[account][:i], tentativeWriteTimestamps[account][i+1:]...)
 			}
 		}
-		locks[account].Unlock()
 	}
 	responseChan <- "COMMIT OK"
 	return
@@ -704,7 +637,6 @@ func finalCommit(transaction Transaction, responseChan chan<- string) {
 
 func handleAbort(transaction Transaction, responseChan chan<- string) {
 	for account, _ := range accounts {
-		locks[account].Lock()
 		for i := 0; i < len(tentativeWriteTimestamps[account]); i++ {
 			if tentativeWriteTimestamps[account][i].TransactionID == transaction.ID {
 				if transaction.MessageType == "WITHDRAW" {
@@ -714,21 +646,8 @@ func handleAbort(transaction Transaction, responseChan chan<- string) {
 				}
 				tentativeWriteTimestamps[account][i].IsAborted = true
 			}
-
-			if tentativeWriteTimestamps[account][i].IsAborted {
-				tentativeWriteTimestamps[account] = append(tentativeWriteTimestamps[account][:i], tentativeWriteTimestamps[account][i+1:]...)
-			}
-		}
-		locks[account].Unlock()
-	}
-
-	for account, _ := range accounts {
-		if latestWriteTimeStamp[account] == 0 {
-			delete(accounts, account)
-			delete(locks, account)
 		}
 	}
-
 	responseChan <- "ABORTED"
 	return
 }

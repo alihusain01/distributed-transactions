@@ -93,18 +93,19 @@ func readConfigFile(filename string) (error) {
 
 func connectToCoordinator() {
 	// Select a random server to connect to
-	randIndex := rand.Intn(len(servers))
-	selectedServer := servers[randIndex]
-
-	conn, err := net.Dial("tcp", selectedServer.Host+":"+selectedServer.Port)
-	if err != nil {
-		fmt.Println("Failed to connect to selected coordinator server.")
+	for{
+		randIndex := rand.Intn(len(servers))
+		serverInfo := servers[randIndex]
+	
+		conn, err := net.Dial("tcp", serverInfo.Host+":"+serverInfo.Port)
+		if err != nil {
+			fmt.Println("Failed to connect to selected coordinator server: ", randIndex)
+		}else{
+			fmt.Println("Connected to coordinator server: ", randIndex)
+			currentConnection = conn
+			break
+		}
 	}
-
-	currentConnection = conn
-
-	fmt.Printf("Connected to %s at %s on port %s\n", selectedServer.Name, selectedServer.Host, selectedServer.Port)
-
 }
 
 func startTransactions() {
