@@ -5,10 +5,10 @@ go build <file name>
 
 ## How to run server
 ```
-./server <server name> <path to config file>
+./server <server name> <config file>
 ```
 
 ## How to run client
 ```
-./client <client name> <path to config file>
+./client <client name> <config file>
 ```
