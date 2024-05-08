@@ -109,7 +109,7 @@ func connectToCoordinator() {
         if err != nil {
             // fmt.Println("Failed to connect to selected coordinator server:", err)
         } else {
-            fmt.Println("Connected to coordinator server:", serverInfo.Name)
+            // fmt.Println("Connected to coordinator server:", serverInfo.Name)
             currentConnection = conn
             break
         }
@@ -165,7 +165,7 @@ func startTransactions(scanner *bufio.Scanner) {
         err := currentDecoder.Decode(&response)
     
         if err != nil {
-            fmt.Println("Failed to receive response from coordinator.", err)
+            // fmt.Println("Failed to receive response from coordinator.", err)
             os.Exit(0)
         }
     

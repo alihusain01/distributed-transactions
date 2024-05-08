@@ -90,7 +90,7 @@ func main() {
 
 	// fmt.Printf("Branch %s has been successfully connected to all servers.\n", branch)
 
-	time.Sleep(3 * time.Second)
+	// time.Sleep(3 * time.Second)
 	handleIncomingConnections(listener, nil)
 }
 
